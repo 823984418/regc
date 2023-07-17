@@ -55,7 +55,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcBox<'c, T> {
         drop(Box::from_raw(this.as_ptr()));
     }
 
-    unsafe fn check(mut this: NonNull<Self>) {
+    unsafe fn check(this: NonNull<Self>) {
         let r = this.as_ref();
         match r.info.state.get() {
             GcState::Active => {
@@ -131,18 +131,22 @@ pub struct GcRoot<'c, T: GcTarget<'c> + ?Sized> {
 }
 
 impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
-    unsafe fn from_ptr(ptr: &GcBox<'c, T>) -> Self {
+    unsafe fn from_ref(ptr: &GcBox<'c, T>) -> Self {
         ptr.info.root.set(ptr.info.root.get() + 1);
         Self {
             ptr: NonNull::from(ptr),
         }
+    }
+
+    fn as_ref(&self) -> &GcBox<'c, T> {
+        unsafe { self.ptr.as_ref() }
     }
 }
 
 impl<'c, T: GcTarget<'c> + ?Sized> Drop for GcRoot<'c, T> {
     fn drop(&mut self) {
         unsafe {
-            let node = self.ptr.as_ref();
+            let node = self.as_ref();
             node.info.root.set(node.info.root.get() - 1);
             GcBox::check(self.ptr)
         }
@@ -160,26 +164,34 @@ pub struct GcObject<'c, T: GcTarget<'c> + ?Sized> {
 }
 
 impl<'c, T: GcTarget<'c> + ?Sized> GcObject<'c, T> {
-    unsafe fn from_ptr(ptr: &GcBox<'c, T>) -> Self {
+    unsafe fn from_ref(ptr: &GcBox<'c, T>) -> Self {
         ptr.info.count.set(ptr.info.count.get() + 1);
         Self {
             ptr: NonNull::from(ptr),
         }
     }
 
-    pub fn from_root(ptr: &GcRoot<'c, T>) -> Self {
-        unsafe { Self::from_ptr(ptr.ptr.as_ref()) }
+    fn as_ref(&self) -> &GcBox<'c, T> {
+        unsafe { self.ptr.as_ref() }
     }
 
-    pub fn to_root(&self) -> GcRoot<'c, T> {
-        todo!()
+    pub fn from_root(ptr: &GcRoot<'c, T>) -> Self {
+        unsafe { Self::from_ref(ptr.as_ref()) }
+    }
+
+    pub fn to_root(&self) -> Option<GcRoot<'c, T>> {
+        let r = self.as_ref();
+        match r.info.state.get() {
+            GcState::Active | GcState::Tracked => unsafe { Some(GcRoot::from_ref(self.as_ref())) },
+            GcState::Dropped | GcState::Untracked => None,
+        }
     }
 }
 
 impl<'c, T: GcTarget<'c> + ?Sized> Drop for GcObject<'c, T> {
     fn drop(&mut self) {
         unsafe {
-            let node = self.ptr.as_ref();
+            let node = self.as_ref();
             node.info.count.set(node.info.count.get() - 1);
             GcBox::check(self.ptr)
         }
@@ -192,13 +204,25 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for GcObject<'c, T> {
     }
 }
 
+impl<'c, T: GcTarget<'c> + ?Sized> From<GcRoot<'c, T>> for GcObject<'c, T> {
+    fn from(value: GcRoot<'c, T>) -> Self {
+        Self::from_root(&value)
+    }
+}
+
+impl<'s, 'c, T: GcTarget<'c> + ?Sized> From<&'s GcRoot<'c, T>> for GcObject<'c, T> {
+    fn from(value: &GcRoot<'c, T>) -> Self {
+        Self::from_root(value)
+    }
+}
+
 pub struct GcTraceToken<'c> {
     head: GcBoxPtr<'c>,
 }
 
 impl<'c> GcTraceToken<'c> {
     pub fn accept<T: GcTarget<'c> + ?Sized>(&mut self, value: &GcObject<'c, T>) {
-        let r = unsafe { value.ptr.as_ref() };
+        let r = value.as_ref();
         match r.info.state.get() {
             GcState::Untracked => {
                 r.info.state.set(GcState::Tracked);
@@ -239,7 +263,7 @@ impl<'c> GcContextRaw<'c> {
     }
 }
 
-impl<'may_dangle> Drop for GcContextRaw<'may_dangle> {
+impl<'c> Drop for GcContextRaw<'c> {
     fn drop(&mut self) {
         self.gc();
     }
@@ -289,7 +313,7 @@ impl<'c> GcContext<'c> {
         unsafe { (*prev.as_ptr()).info.next.set(value_ptr) };
         tail.info.prev.set(value_ptr);
 
-        unsafe { GcRoot::from_ptr(value_ref) }
+        unsafe { GcRoot::from_ref(value_ref) }
     }
 
     pub fn gc(&self) {
@@ -320,4 +344,6 @@ fn test() {
 
     let x = GcContext::new();
     let y = x.alloc(D);
+    let z = GcObject::from(&y);
+    let w = z.to_root();
 }
