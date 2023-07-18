@@ -181,6 +181,14 @@ pub struct GcRoot<'c, T: GcTarget<'c> + ?Sized> {
     ptr: NonNull<GcBox<'c, T>>,
 }
 
+pub struct GcUnknownType(PhantomData<()>);
+
+impl<'c> GcTarget<'c> for GcUnknownType {
+    fn trace(&self, token: &mut GcTraceToken<'c>) {
+        unreachable!();
+    }
+}
+
 impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
     unsafe fn from_ref(ptr: &GcBox<'c, T>) -> Self {
         ptr.info.root.set(ptr.info.root.get() + 1);
@@ -191,6 +199,24 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
 
     fn as_ref(&self) -> &GcBox<'c, T> {
         unsafe { self.ptr.as_ref() }
+    }
+
+    pub fn cast_unknown_type(this: Self) -> GcRoot<'c, GcUnknownType> {
+        unsafe {
+            GcRoot {
+                ptr: this.ptr.cast(),
+            }
+        }
+    }
+
+    pub fn cast_dyn(this: Self) -> GcRoot<'c, dyn GcTarget<'c>> {
+        unsafe {
+            GcRoot {
+                ptr: NonNull::new_unchecked(
+                    GcBoxPtr::from_ref(this.ptr.as_ref()).as_ptr().cast_mut(),
+                ),
+            }
+        }
     }
 }
 
@@ -255,6 +281,24 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcObject<'c, T> {
         match r.info.state.get() {
             GcState::Active | GcState::Tracked => unsafe { Some(GcRoot::from_ref(self.as_ref())) },
             GcState::Dropped | GcState::Untracked => None,
+        }
+    }
+
+    pub fn cast_unknown_type(self) -> GcRoot<'c, GcUnknownType> {
+        unsafe {
+            GcRoot {
+                ptr: self.ptr.cast(),
+            }
+        }
+    }
+
+    pub fn cast_dyn(self) -> GcObject<'c, dyn GcTarget<'c>> {
+        unsafe {
+            GcObject {
+                ptr: NonNull::new_unchecked(
+                    GcBoxPtr::from_ref(self.ptr.as_ref()).as_ptr().cast_mut(),
+                ),
+            }
         }
     }
 }
