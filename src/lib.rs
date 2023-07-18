@@ -210,6 +210,10 @@ impl<'c> GcRootThin<'c> {
         unsafe { &*self.as_ptr() }
     }
 
+    pub fn downgrade(&self) -> GcObjectThin<'c> {
+        unsafe { GcObjectThin::from_ptr(self.as_ptr()) }
+    }
+
     pub fn cast_fat(self) -> GcRoot<'c, dyn GcTarget<'c>> {
         let r = GcRoot {
             ptr: NonNull::from(self.as_ref()),
@@ -333,6 +337,16 @@ impl<'c> GcObjectThin<'c> {
 
     fn as_ref(&self) -> &GcBox<'c, dyn GcTarget<'c>> {
         unsafe { &*self.as_ptr() }
+    }
+
+    pub fn upgrade(&self) -> Option<GcRootThin<'c>> {
+        let r = self.as_ref();
+        match r.info.state.get() {
+            GcState::Active | GcState::Tracked => unsafe {
+                Some(GcRootThin::from_ptr(self.as_ptr()))
+            },
+            GcState::Dropped | GcState::Untracked => None,
+        }
     }
 
     pub fn cast_fat(self) -> GcObject<'c, dyn GcTarget<'c>> {
