@@ -2,7 +2,7 @@ use std::any::type_name;
 use std::cell::{Cell, UnsafeCell};
 use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
-use std::mem::{transmute, ManuallyDrop, forget};
+use std::mem::{forget, transmute, ManuallyDrop};
 use std::ops::Deref;
 use std::ptr::NonNull;
 
@@ -177,17 +177,45 @@ impl<'c> Debug for GcBoxPtr<'c> {
     }
 }
 
-pub struct GcRoot<'c, T: GcTarget<'c> + ?Sized> {
-    ptr: NonNull<GcBox<'c, T>>,
+pub struct GcRootThin<'c> {
+    ptr: NonNull<()>,
+    marker: PhantomData<GcRoot<'c, dyn GcTarget<'c>>>,
 }
 
-pub struct GcUnknownType(PhantomData<()>);
-
-impl<'c> GcTarget<'c> for GcUnknownType {
-    fn trace(&self, token: &mut GcTraceToken<'c>) {
-        let _ = token;
-        unreachable!();
+impl<'c> Drop for GcRootThin<'c> {
+    fn drop(&mut self) {
+        unsafe {
+            let node = self.as_ref();
+            node.info.root.set(node.info.root.get() - 1);
+            GcBox::check(node)
+        }
     }
+}
+
+impl<'c> GcRootThin<'c> {
+    fn as_ref(&self) -> &GcBox<'c, dyn GcTarget<'c>> {
+        unsafe { &*GcBoxPtr::from_ptr(self.ptr.as_ptr()).as_ptr() }
+    }
+
+    pub fn cast_fat(self) -> GcRoot<'c, dyn GcTarget<'c>> {
+        let r = GcRoot {
+            ptr: NonNull::from(self.as_ref()),
+        };
+        forget(self);
+        r
+    }
+}
+
+impl<'c> Deref for GcRootThin<'c> {
+    type Target = dyn GcTarget<'c>;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { (&*self.as_ref().value.get()).deref() }
+    }
+}
+
+pub struct GcRoot<'c, T: GcTarget<'c> + ?Sized> {
+    ptr: NonNull<GcBox<'c, T>>,
 }
 
 impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
@@ -202,22 +230,25 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
         unsafe { self.ptr.as_ref() }
     }
 
-    pub fn cast_unknown_type(this: Self) -> GcRoot<'c, GcUnknownType> {
-        let r = GcRoot {
-            ptr: this.ptr.cast(),
-        };
-        forget(this);
-        r
-    }
-
-    pub fn cast_dyn(this: Self) -> GcRoot<'c, dyn GcTarget<'c>> {
+    pub fn cast_dyn(self) -> GcRoot<'c, dyn GcTarget<'c>> {
         unsafe {
             let r = GcRoot {
                 ptr: NonNull::new_unchecked(
-                    GcBoxPtr::from_ref(this.ptr.as_ref()).as_ptr().cast_mut(),
+                    GcBoxPtr::from_ref(self.ptr.as_ref()).as_ptr().cast_mut(),
                 ),
             };
-            forget(this);
+            forget(self);
+            r
+        }
+    }
+
+    pub fn cast_thin(self) -> GcRootThin<'c> {
+        unsafe {
+            let r = GcRootThin {
+                ptr: NonNull::new_unchecked(GcBoxPtr::from_ref(self.ptr.as_ref()).ptr.cast_mut()),
+                marker: PhantomData,
+            };
+            forget(self);
             r
         }
     }
@@ -233,7 +264,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> Deref for GcRoot<'c, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { &*self.as_ref().value.get() }
+        unsafe { (&*self.as_ref().value.get()).deref() }
     }
 }
 
@@ -242,7 +273,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> Drop for GcRoot<'c, T> {
         unsafe {
             let node = self.as_ref();
             node.info.root.set(node.info.root.get() - 1);
-            GcBox::check(self.ptr.as_ptr())
+            GcBox::check(node)
         }
     }
 }
@@ -256,6 +287,35 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for GcRoot<'c, T> {
 impl<'s, 'c, T: GcTarget<'c> + ?Sized> From<&'s GcRoot<'c, T>> for GcRoot<'c, T> {
     fn from(value: &'s GcRoot<'c, T>) -> Self {
         unsafe { Self::from_ref(value.as_ref()) }
+    }
+}
+
+pub struct GcObjectThin<'c> {
+    ptr: NonNull<()>,
+    marker: PhantomData<GcObject<'c, dyn GcTarget<'c>>>,
+}
+
+impl<'c> GcObjectThin<'c> {
+    fn as_ref(&self) -> &GcBox<'c, dyn GcTarget<'c>> {
+        unsafe { &*GcBoxPtr::from_ptr(self.ptr.as_ptr()).as_ptr() }
+    }
+
+    pub fn cast_fat(self) -> GcObject<'c, dyn GcTarget<'c>> {
+        let r = GcObject {
+            ptr: NonNull::from(self.as_ref()),
+        };
+        forget(self);
+        r
+    }
+}
+
+impl<'c> Drop for GcObjectThin<'c> {
+    fn drop(&mut self) {
+        unsafe {
+            let node = self.as_ref();
+            node.info.count.set(node.info.count.get() - 1);
+            GcBox::check(node)
+        }
     }
 }
 
@@ -287,14 +347,6 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcObject<'c, T> {
         }
     }
 
-    pub fn cast_unknown_type(self) -> GcRoot<'c, GcUnknownType> {
-        let r = GcRoot {
-            ptr: self.ptr.cast(),
-        };
-        forget(self);
-        r
-    }
-
     pub fn cast_dyn(self) -> GcObject<'c, dyn GcTarget<'c>> {
         unsafe {
             let r = GcObject {
@@ -303,6 +355,17 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcObject<'c, T> {
                 ),
             };
             forget(self);
+            r
+        }
+    }
+
+    pub fn cast_thin(this: Self) -> GcObjectThin<'c> {
+        unsafe {
+            let r = GcObjectThin {
+                ptr: NonNull::new_unchecked(GcBoxPtr::from_ref(this.ptr.as_ref()).ptr.cast_mut()),
+                marker: PhantomData,
+            };
+            forget(this);
             r
         }
     }
@@ -319,7 +382,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> Drop for GcObject<'c, T> {
         unsafe {
             let node = self.as_ref();
             node.info.count.set(node.info.count.get() - 1);
-            GcBox::check(self.ptr.as_ptr())
+            GcBox::check(node)
         }
     }
 }
