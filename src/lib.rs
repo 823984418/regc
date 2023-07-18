@@ -224,6 +224,12 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for GcRoot<'c, T> {
     }
 }
 
+impl<'s, 'c, T: GcTarget<'c> + ?Sized> From<&'s GcRoot<'c, T>> for GcRoot<'c, T> {
+    fn from(value: &'s GcRoot<'c, T>) -> Self {
+        unsafe { Self::from_ref(value.as_ref()) }
+    }
+}
+
 pub struct GcObject<'c, T: GcTarget<'c> + ?Sized> {
     ptr: NonNull<GcBox<'c, T>>,
 }
@@ -560,24 +566,27 @@ macro_rules! trace_none {
 fn test() {
     let _ = env_logger::try_init();
 
-    struct D<'c> {
-        r: std::cell::RefCell<Option<GcRoot<'c, Self>>>,
+    struct Foo<'c> {
+        r: std::cell::RefCell<Option<GcObject<'c, Self>>>,
     }
-    impl<'c> Drop for D<'c> {
+
+    impl<'c> Drop for Foo<'c> {
         fn drop(&mut self) {
-            println!("Drop for D");
+            println!("Drop for Foo");
         }
     }
 
-    impl<'c> GcTarget<'c> for D<'c> {
+    impl<'c> GcTarget<'c> for Foo<'c> {
         fn trace(&self, token: &mut GcTraceToken<'c>) {
             self.r.trace(token);
         }
     }
 
-    let c = GcContext::new();
-    let x = c.alloc(D {
+    let context = GcContext::new();
+    let x = context.alloc(Foo {
         r: std::cell::RefCell::new(None),
     });
-    *x.r.borrow_mut() = Some(x.clone());
+    *x.r.borrow_mut() = Some((&x).into());
+    context.gc();
+    *x.r.borrow_mut() = None;
 }

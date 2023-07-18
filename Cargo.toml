@@ -2,8 +2,12 @@
 name = "regc"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+repository = "https://github.com/823984418/regc"
+categories = ["memory-management"]
+keywords = ["gc"]
+description = "A garbage collector that mixes Reference counting and mark sweeping"
+license = "MIT OR Apache-2.0"
+authors = ["823984418@qq.com"]
 
 [dependencies]
 log = "0.4.18"
