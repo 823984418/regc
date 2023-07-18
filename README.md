@@ -27,7 +27,7 @@ let context = GcContext::new();
 let x = context.alloc(Foo {
     r: std::cell::RefCell::new(None),
 });
-*x.r.borrow_mut() = Some((&x).into());
+*x.r.borrow_mut() = Some(x.downgrade());
 context.gc();
 *x.r.borrow_mut() = None;
 ```

@@ -64,7 +64,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcBox<'c, T> {
         drop(Box::from_raw(this.cast_mut()));
     }
 
-    unsafe fn delete(this: *const Self) {
+    unsafe fn remove(this: *const Self) {
         let r = &*this;
         let prev = r.info.prev.get();
         let next = r.info.next.get();
@@ -73,22 +73,22 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcBox<'c, T> {
         Self::free(this);
     }
 
-    unsafe fn drop_value(this: &Self) {
-        trace!("drop {:?}", this as *const Self);
-        ManuallyDrop::drop(&mut *this.value.get());
+    unsafe fn drop_value(&self) {
+        trace!("drop {:?}", self as *const Self);
+        ManuallyDrop::drop(&mut *self.value.get());
     }
 
-    unsafe fn check(this: *const Self) {
+    unsafe fn check_ref(this: *const Self) {
         let r = &*this;
         match r.info.state.get() {
             GcState::Active => {
                 if r.info.root.get() == 0 && r.info.count.get() == 0 {
                     r.info.state.set(GcState::Dropped);
                     Self::drop_value(r);
-                    Self::delete(this);
+                    Self::remove(this);
                 }
             }
-            GcState::Dropped => Self::delete(this),
+            GcState::Dropped => Self::remove(this),
             GcState::Tracked | GcState::Untracked => {}
         }
     }
@@ -187,14 +187,27 @@ impl<'c> Drop for GcRootThin<'c> {
         unsafe {
             let node = self.as_ref();
             node.info.root.set(node.info.root.get() - 1);
-            GcBox::check(node)
+            GcBox::check_ref(self.as_ptr());
         }
     }
 }
 
 impl<'c> GcRootThin<'c> {
+    unsafe fn from_ptr(ptr: *const GcBox<'c, dyn GcTarget<'c>>) -> Self {
+        let r = &*ptr;
+        r.info.root.set(r.info.root.get() + 1);
+        Self {
+            ptr: NonNull::from(r).cast(),
+            marker: PhantomData,
+        }
+    }
+
+    fn as_ptr(&self) -> *const GcBox<'c, dyn GcTarget<'c>> {
+        GcBoxPtr::from_ptr(self.ptr.as_ptr()).as_ptr()
+    }
+
     fn as_ref(&self) -> &GcBox<'c, dyn GcTarget<'c>> {
-        unsafe { &*GcBoxPtr::from_ptr(self.ptr.as_ptr()).as_ptr() }
+        unsafe { &*self.as_ptr() }
     }
 
     pub fn cast_fat(self) -> GcRoot<'c, dyn GcTarget<'c>> {
@@ -214,20 +227,35 @@ impl<'c> Deref for GcRootThin<'c> {
     }
 }
 
+impl<'c> Clone for GcRootThin<'c> {
+    fn clone(&self) -> Self {
+        unsafe { Self::from_ptr(self.as_ref()) }
+    }
+}
+
 pub struct GcRoot<'c, T: GcTarget<'c> + ?Sized> {
     ptr: NonNull<GcBox<'c, T>>,
 }
 
 impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
-    unsafe fn from_ref(ptr: &GcBox<'c, T>) -> Self {
-        ptr.info.root.set(ptr.info.root.get() + 1);
+    unsafe fn from_ptr(ptr: *const GcBox<'c, T>) -> Self {
+        let r = &*ptr;
+        r.info.root.set(r.info.root.get() + 1);
         Self {
-            ptr: NonNull::from(ptr),
+            ptr: NonNull::from(r),
         }
     }
 
+    fn as_ptr(&self) -> *const GcBox<'c, T> {
+        self.ptr.as_ptr()
+    }
+
     fn as_ref(&self) -> &GcBox<'c, T> {
-        unsafe { self.ptr.as_ref() }
+        unsafe { &*self.as_ptr() }
+    }
+
+    pub fn downgrade(&self) -> GcObject<'c, T> {
+        unsafe { GcObject::from_ptr(self.as_ptr()) }
     }
 
     pub fn cast_dyn(self) -> GcRoot<'c, dyn GcTarget<'c>> {
@@ -256,7 +284,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
 
 impl<'c, T: GcTarget<'c> + ?Sized> Clone for GcRoot<'c, T> {
     fn clone(&self) -> Self {
-        unsafe { Self::from_ref(self.as_ref()) }
+        unsafe { Self::from_ptr(self.as_ptr()) }
     }
 }
 
@@ -273,7 +301,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> Drop for GcRoot<'c, T> {
         unsafe {
             let node = self.as_ref();
             node.info.root.set(node.info.root.get() - 1);
-            GcBox::check(node)
+            GcBox::check_ref(self.as_ptr());
         }
     }
 }
@@ -284,20 +312,27 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for GcRoot<'c, T> {
     }
 }
 
-impl<'s, 'c, T: GcTarget<'c> + ?Sized> From<&'s GcRoot<'c, T>> for GcRoot<'c, T> {
-    fn from(value: &'s GcRoot<'c, T>) -> Self {
-        unsafe { Self::from_ref(value.as_ref()) }
-    }
-}
-
 pub struct GcObjectThin<'c> {
     ptr: NonNull<()>,
     marker: PhantomData<GcObject<'c, dyn GcTarget<'c>>>,
 }
 
 impl<'c> GcObjectThin<'c> {
+    unsafe fn from_ptr(ptr: *const GcBox<'c, dyn GcTarget<'c>>) -> Self {
+        let r = &*ptr;
+        r.info.count.set(r.info.count.get() + 1);
+        Self {
+            ptr: NonNull::from(r).cast(),
+            marker: PhantomData,
+        }
+    }
+
+    fn as_ptr(&self) -> *const GcBox<'c, dyn GcTarget<'c>> {
+        GcBoxPtr::from_ptr(self.ptr.as_ptr()).as_ptr()
+    }
+
     fn as_ref(&self) -> &GcBox<'c, dyn GcTarget<'c>> {
-        unsafe { &*GcBoxPtr::from_ptr(self.ptr.as_ptr()).as_ptr() }
+        unsafe { &*self.as_ptr() }
     }
 
     pub fn cast_fat(self) -> GcObject<'c, dyn GcTarget<'c>> {
@@ -314,8 +349,14 @@ impl<'c> Drop for GcObjectThin<'c> {
         unsafe {
             let node = self.as_ref();
             node.info.count.set(node.info.count.get() - 1);
-            GcBox::check(node)
+            GcBox::check_ref(self.as_ptr());
         }
+    }
+}
+
+impl<'c> Clone for GcObjectThin<'c> {
+    fn clone(&self) -> Self {
+        unsafe { Self::from_ptr(self.as_ref()) }
     }
 }
 
@@ -324,25 +365,26 @@ pub struct GcObject<'c, T: GcTarget<'c> + ?Sized> {
 }
 
 impl<'c, T: GcTarget<'c> + ?Sized> GcObject<'c, T> {
-    unsafe fn from_ref(ptr: &GcBox<'c, T>) -> Self {
-        ptr.info.count.set(ptr.info.count.get() + 1);
+    unsafe fn from_ptr(ptr: *const GcBox<'c, T>) -> Self {
+        let r = &*ptr;
+        r.info.count.set(r.info.count.get() + 1);
         Self {
-            ptr: NonNull::from(ptr),
+            ptr: NonNull::from(r),
         }
     }
 
+    fn as_ptr(&self) -> *const GcBox<'c, T> {
+        self.ptr.as_ptr()
+    }
+
     fn as_ref(&self) -> &GcBox<'c, T> {
-        unsafe { self.ptr.as_ref() }
+        unsafe { &*self.as_ptr() }
     }
 
-    pub fn from_root(ptr: &GcRoot<'c, T>) -> Self {
-        unsafe { Self::from_ref(ptr.as_ref()) }
-    }
-
-    pub fn to_root(&self) -> Option<GcRoot<'c, T>> {
+    pub fn upgrade(&self) -> Option<GcRoot<'c, T>> {
         let r = self.as_ref();
         match r.info.state.get() {
-            GcState::Active | GcState::Tracked => unsafe { Some(GcRoot::from_ref(self.as_ref())) },
+            GcState::Active | GcState::Tracked => unsafe { Some(GcRoot::from_ptr(self.as_ptr())) },
             GcState::Dropped | GcState::Untracked => None,
         }
     }
@@ -373,7 +415,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcObject<'c, T> {
 
 impl<'c, T: GcTarget<'c> + ?Sized> Clone for GcObject<'c, T> {
     fn clone(&self) -> Self {
-        unsafe { Self::from_ref(self.as_ref()) }
+        unsafe { Self::from_ptr(self.as_ptr()) }
     }
 }
 
@@ -382,7 +424,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> Drop for GcObject<'c, T> {
         unsafe {
             let node = self.as_ref();
             node.info.count.set(node.info.count.get() - 1);
-            GcBox::check(node)
+            GcBox::check_ref(self.as_ptr());
         }
     }
 }
@@ -390,18 +432,6 @@ impl<'c, T: GcTarget<'c> + ?Sized> Drop for GcObject<'c, T> {
 impl<'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for GcObject<'c, T> {
     fn trace(&self, token: &mut GcTraceToken<'c>) {
         token.accept(self);
-    }
-}
-
-impl<'c, T: GcTarget<'c> + ?Sized> From<GcRoot<'c, T>> for GcObject<'c, T> {
-    fn from(value: GcRoot<'c, T>) -> Self {
-        Self::from_root(&value)
-    }
-}
-
-impl<'s, 'c, T: GcTarget<'c> + ?Sized> From<&'s GcRoot<'c, T>> for GcObject<'c, T> {
-    fn from(value: &GcRoot<'c, T>) -> Self {
-        Self::from_root(value)
     }
 }
 
@@ -550,7 +580,7 @@ impl<'c> GcContextRaw<'c> {
         unsafe { (*prev.as_ptr()).info.next.set(value_ptr) };
         tail.info.prev.set(value_ptr);
 
-        unsafe { GcRoot::from_ref(value_ref) }
+        unsafe { GcRoot::from_ptr(value) }
     }
 
     fn gc(&self) {
@@ -729,7 +759,7 @@ fn test() {
     let x = context.alloc(Foo {
         r: std::cell::RefCell::new(None),
     });
-    *x.r.borrow_mut() = Some((&x).into());
+    *x.r.borrow_mut() = Some(x.downgrade());
     context.gc();
     *x.r.borrow_mut() = None;
 }
