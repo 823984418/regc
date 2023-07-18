@@ -185,6 +185,7 @@ pub struct GcUnknownType(PhantomData<()>);
 
 impl<'c> GcTarget<'c> for GcUnknownType {
     fn trace(&self, token: &mut GcTraceToken<'c>) {
+        let _ = token;
         unreachable!();
     }
 }
@@ -202,10 +203,8 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
     }
 
     pub fn cast_unknown_type(this: Self) -> GcRoot<'c, GcUnknownType> {
-        unsafe {
-            GcRoot {
-                ptr: this.ptr.cast(),
-            }
+        GcRoot {
+            ptr: this.ptr.cast(),
         }
     }
 
@@ -285,10 +284,8 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcObject<'c, T> {
     }
 
     pub fn cast_unknown_type(self) -> GcRoot<'c, GcUnknownType> {
-        unsafe {
-            GcRoot {
-                ptr: self.ptr.cast(),
-            }
+        GcRoot {
+            ptr: self.ptr.cast(),
         }
     }
 
