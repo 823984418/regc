@@ -2,7 +2,7 @@ use std::any::type_name;
 use std::cell::{Cell, UnsafeCell};
 use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
-use std::mem::{transmute, ManuallyDrop};
+use std::mem::{transmute, ManuallyDrop, forget};
 use std::ops::Deref;
 use std::ptr::NonNull;
 
@@ -203,18 +203,22 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
     }
 
     pub fn cast_unknown_type(this: Self) -> GcRoot<'c, GcUnknownType> {
-        GcRoot {
+        let r = GcRoot {
             ptr: this.ptr.cast(),
-        }
+        };
+        forget(this);
+        r
     }
 
     pub fn cast_dyn(this: Self) -> GcRoot<'c, dyn GcTarget<'c>> {
         unsafe {
-            GcRoot {
+            let r = GcRoot {
                 ptr: NonNull::new_unchecked(
                     GcBoxPtr::from_ref(this.ptr.as_ref()).as_ptr().cast_mut(),
                 ),
-            }
+            };
+            forget(this);
+            r
         }
     }
 }
@@ -284,18 +288,22 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcObject<'c, T> {
     }
 
     pub fn cast_unknown_type(self) -> GcRoot<'c, GcUnknownType> {
-        GcRoot {
+        let r = GcRoot {
             ptr: self.ptr.cast(),
-        }
+        };
+        forget(self);
+        r
     }
 
     pub fn cast_dyn(self) -> GcObject<'c, dyn GcTarget<'c>> {
         unsafe {
-            GcObject {
+            let r = GcObject {
                 ptr: NonNull::new_unchecked(
                     GcBoxPtr::from_ref(self.ptr.as_ref()).as_ptr().cast_mut(),
                 ),
-            }
+            };
+            forget(self);
+            r
         }
     }
 }
