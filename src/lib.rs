@@ -388,12 +388,59 @@ enum GcContextState {
 
 #[derive(Debug)]
 struct GcContextRaw<'c> {
+    auto_gc: usize,
     state: Cell<GcContextState>,
+    alloc_count: Cell<usize>,
     head: Box<GcBox<'c, ()>>,
     tail: Box<GcBox<'c, ()>>,
 }
 
 impl<'c> GcContextRaw<'c> {
+    fn new() -> Self {
+        let head = Box::new(GcBox::new(()));
+        head.info.root.set(1);
+        let tail = Box::new(GcBox::new(()));
+        tail.info.root.set(1);
+
+        head.info.next.set(GcBoxPtr::from_ref(tail.deref()));
+        tail.info.prev.set(GcBoxPtr::from_ref(head.deref()));
+
+        Self {
+            state: Cell::new(GcContextState::Normal),
+            auto_gc: 0,
+            alloc_count: Cell::new(0),
+            head,
+            tail,
+        }
+    }
+
+    fn alloc<T: GcTarget<'c>>(&'c self, value: T) -> GcRoot<'c, T> {
+        if self.auto_gc != 0 {
+            let alloc_count = self.alloc_count.get() + 1;
+            if alloc_count == self.auto_gc {
+                self.alloc_count.set(0);
+                info!("auto gc");
+                self.gc();
+            } else {
+                self.alloc_count.set(alloc_count);
+            }
+        }
+
+        let value = GcBox::alloc(value);
+        let value_ref = unsafe { &*value };
+        let value_ptr = GcBoxPtr::from_ref(value_ref);
+
+        let tail = self.tail.deref();
+        let prev = tail.info.prev.get();
+
+        value_ref.info.prev.set(prev);
+        value_ref.info.next.set(GcBoxPtr::from_ref(tail));
+        unsafe { (*prev.as_ptr()).info.next.set(value_ptr) };
+        tail.info.prev.set(value_ptr);
+
+        unsafe { GcRoot::from_ref(value_ref) }
+    }
+
     fn gc(&self) {
         info!("call gc");
         match self.state.get() {
@@ -501,53 +548,37 @@ impl<'c> Drop for GcContextRaw<'c> {
 
 #[derive(Debug)]
 pub struct GcContext<'c> {
-    raw: GcContextRaw<'static>,
+    inner: GcContextRaw<'static>,
     marker: PhantomData<*mut &'c ()>,
 }
 
 impl<'c> GcContext<'c> {
-    fn raw(&self) -> &GcContextRaw<'c> {
-        unsafe { &*((&self.raw as *const GcContextRaw<'static>).cast()) }
+    fn inner(&self) -> &GcContextRaw<'c> {
+        unsafe { &*((&self.inner as *const GcContextRaw<'static>).cast()) }
+    }
+
+    fn inner_mut(&mut self) -> &mut GcContextRaw<'c> {
+        unsafe { &mut *((&mut self.inner as *mut GcContextRaw<'static>).cast()) }
     }
 
     pub fn new() -> Self {
-        let head = Box::new(GcBox::new(()));
-        head.info.root.set(1);
-        let tail = Box::new(GcBox::new(()));
-        tail.info.root.set(1);
-
-        head.info.next.set(GcBoxPtr::from_ref(tail.deref()));
-        tail.info.prev.set(GcBoxPtr::from_ref(head.deref()));
         Self {
-            raw: GcContextRaw {
-                state: Cell::new(GcContextState::Normal),
-                head,
-                tail,
-            },
+            inner: GcContextRaw::new(),
             marker: PhantomData,
         }
     }
 
+    pub fn set_auto_gc(&mut self, auto_gc: usize) {
+        self.inner_mut().auto_gc = auto_gc;
+        self.inner_mut().alloc_count.set(0);
+    }
+
     pub fn alloc<T: GcTarget<'c>>(&'c self, value: T) -> GcRoot<'c, T> {
-        let raw = self.raw();
-
-        let value = GcBox::alloc(value);
-        let value_ref = unsafe { &*value };
-        let value_ptr = GcBoxPtr::from_ref(value_ref);
-
-        let tail = raw.tail.deref();
-        let prev = tail.info.prev.get();
-
-        value_ref.info.prev.set(prev);
-        value_ref.info.next.set(GcBoxPtr::from_ref(tail));
-        unsafe { (*prev.as_ptr()).info.next.set(value_ptr) };
-        tail.info.prev.set(value_ptr);
-
-        unsafe { GcRoot::from_ref(value_ref) }
+        self.inner().alloc(value)
     }
 
     pub fn gc(&self) {
-        self.raw().gc()
+        self.inner().gc()
     }
 }
 
