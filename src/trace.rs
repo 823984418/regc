@@ -112,6 +112,8 @@ trace_none!(i128);
 trace_none!(u128);
 trace_none!(isize);
 trace_none!(usize);
+trace_none!(f32);
+trace_none!(f64);
 
 macro_rules! trace_tuple {
     ($($name:ident)*) => {
