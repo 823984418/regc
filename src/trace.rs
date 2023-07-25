@@ -1,4 +1,6 @@
 use std::cell::{Cell, RefCell};
+use std::collections::{LinkedList, VecDeque};
+use std::marker::{PhantomData, PhantomPinned};
 use std::ops::Deref;
 use std::rc::Rc;
 
@@ -25,6 +27,22 @@ impl<'c, T: GcTarget<'c>> GcTarget<'c> for [T] {
 }
 
 impl<'c, T: GcTarget<'c>> GcTarget<'c> for Vec<T> {
+    fn trace(&self, token: &mut GcTraceToken<'c>) {
+        for i in self {
+            i.trace(token);
+        }
+    }
+}
+
+impl<'c, T: GcTarget<'c>> GcTarget<'c> for LinkedList<T> {
+    fn trace(&self, token: &mut GcTraceToken<'c>) {
+        for i in self {
+            i.trace(token);
+        }
+    }
+}
+
+impl<'c, T: GcTarget<'c>> GcTarget<'c> for VecDeque<T> {
     fn trace(&self, token: &mut GcTraceToken<'c>) {
         for i in self {
             i.trace(token);
@@ -72,6 +90,14 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for RefCell<T> {
         T::trace(self.borrow().deref(), token);
     }
 }
+
+impl<'c, T> GcTarget<'c> for PhantomData<T> {
+    fn trace(&self, token: &mut GcTraceToken<'c>) {
+        let _ = token;
+    }
+}
+
+trace_none!(PhantomPinned);
 
 trace_none!(bool);
 trace_none!(i8);

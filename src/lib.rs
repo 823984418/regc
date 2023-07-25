@@ -27,7 +27,7 @@ struct GcInfo<'c> {
 }
 
 #[repr(C)]
-struct GcBox<'c, T: GcTarget<'c> + ?Sized> {
+struct GcBox<'c, T: GcTarget<'c> + ?Sized + 'c> {
     metadata: &'static (),
     info: GcInfo<'c>,
     value: ManuallyDrop<T>,
@@ -102,7 +102,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcBox<'c, T> {
 struct GcBoxDynPtr<'c> {
     ptr: *const (),
     metadata: &'static (),
-    marker: PhantomData<*mut GcBox<'c, dyn GcTarget<'c>>>,
+    marker: PhantomData<*mut GcBox<'c, dyn GcTarget<'c> + 'c>>,
 }
 
 impl<'c> GcBoxDynPtr<'c> {
@@ -127,18 +127,18 @@ impl<'c> GcBoxDynPtr<'c> {
 #[repr(transparent)]
 struct NonNullGcBox<'c> {
     ptr: NonNull<()>,
-    marker: PhantomData<*const GcBox<'c, dyn GcTarget<'c>>>,
+    marker: PhantomData<*const GcBox<'c, dyn GcTarget<'c> + 'c>>,
 }
 
 impl<'c> NonNullGcBox<'c> {
-    const fn from_non_null<T: GcTarget<'c> + ?Sized>(ptr: NonNull<GcBox<'c, T>>) -> Self {
+    const fn from_non_null<T: GcTarget<'c> + ?Sized + 'c>(ptr: NonNull<GcBox<'c, T>>) -> Self {
         Self {
             ptr: ptr.cast(),
             marker: PhantomData,
         }
     }
 
-    fn from_ptr<T: GcTarget<'c> + ?Sized>(ptr: *const GcBox<'c, T>) -> Option<Self> {
+    fn from_ptr<T: GcTarget<'c> + ?Sized + 'c>(ptr: *const GcBox<'c, T>) -> Option<Self> {
         NonNull::new(ptr.cast_mut()).map(|ptr| Self {
             ptr: ptr.cast(),
             marker: PhantomData,
@@ -169,7 +169,7 @@ impl<'c> Debug for NonNullGcBox<'c> {
 
 pub struct GcRootThin<'c> {
     ptr: NonNullGcBox<'c>,
-    marker: PhantomData<GcRoot<'c, dyn GcTarget<'c>>>,
+    marker: PhantomData<GcRoot<'c, dyn GcTarget<'c> + 'c>>,
 }
 
 impl<'c> Drop for GcRootThin<'c> {
@@ -235,11 +235,11 @@ impl<'c> Deref for GcRootThin<'c> {
     }
 }
 
-pub struct GcRoot<'c, T: GcTarget<'c> + ?Sized> {
+pub struct GcRoot<'c, T: GcTarget<'c> + ?Sized + 'c> {
     ptr: NonNull<GcBox<'c, T>>,
 }
 
-impl<'c, T: GcTarget<'c> + ?Sized> Drop for GcRoot<'c, T> {
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> Drop for GcRoot<'c, T> {
     fn drop(&mut self) {
         unsafe {
             let node = self.ptr.as_ref();
@@ -249,7 +249,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> Drop for GcRoot<'c, T> {
     }
 }
 
-impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> GcRoot<'c, T> {
     unsafe fn from_box(ptr: NonNull<GcBox<'c, T>>) -> Self {
         let r = ptr.as_ref();
         r.info.root.set(r.info.root.get() + 1);
@@ -286,25 +286,25 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
     }
 }
 
-impl<'c, T: GcTarget<'c> + ?Sized> Clone for GcRoot<'c, T> {
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> Clone for GcRoot<'c, T> {
     fn clone(&self) -> Self {
         unsafe { Self::from_box(self.ptr) }
     }
 }
 
-impl<'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for GcRoot<'c, T> {
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> GcTarget<'c> for GcRoot<'c, T> {
     fn trace(&self, token: &mut GcTraceToken<'c>) {
         let _ = token;
     }
 }
 
-impl<'c, T: GcTarget<'c> + ?Sized> Debug for GcRoot<'c, T> {
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> Debug for GcRoot<'c, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self.ptr, f)
     }
 }
 
-impl<'c, T: GcTarget<'c> + ?Sized> Deref for GcRoot<'c, T> {
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> Deref for GcRoot<'c, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -314,7 +314,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> Deref for GcRoot<'c, T> {
 
 pub struct GcObjectThin<'c> {
     ptr: NonNullGcBox<'c>,
-    marker: PhantomData<GcObject<'c, dyn GcTarget<'c>>>,
+    marker: PhantomData<GcObject<'c, dyn GcTarget<'c> + 'c>>,
 }
 
 impl<'c> Drop for GcObjectThin<'c> {
@@ -378,11 +378,11 @@ impl<'c> Debug for GcObjectThin<'c> {
     }
 }
 
-pub struct GcObject<'c, T: GcTarget<'c> + ?Sized> {
+pub struct GcObject<'c, T: GcTarget<'c> + ?Sized + 'c> {
     ptr: NonNull<GcBox<'c, T>>,
 }
 
-impl<'c, T: GcTarget<'c> + ?Sized> Drop for GcObject<'c, T> {
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> Drop for GcObject<'c, T> {
     fn drop(&mut self) {
         unsafe {
             let node = self.ptr.as_ref();
@@ -392,7 +392,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> Drop for GcObject<'c, T> {
     }
 }
 
-impl<'c, T: GcTarget<'c> + ?Sized> GcObject<'c, T> {
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> GcObject<'c, T> {
     unsafe fn from_box(ptr: NonNull<GcBox<'c, T>>) -> Self {
         let r = ptr.as_ref();
         r.info.count.set(r.info.count.get() + 1);
@@ -429,19 +429,19 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcObject<'c, T> {
     }
 }
 
-impl<'c, T: GcTarget<'c> + ?Sized> Clone for GcObject<'c, T> {
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> Clone for GcObject<'c, T> {
     fn clone(&self) -> Self {
         unsafe { Self::from_box(self.ptr) }
     }
 }
 
-impl<'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for GcObject<'c, T> {
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> GcTarget<'c> for GcObject<'c, T> {
     fn trace(&self, token: &mut GcTraceToken<'c>) {
         token.accept(self);
     }
 }
 
-impl<'c, T: GcTarget<'c> + ?Sized> Debug for GcObject<'c, T> {
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> Debug for GcObject<'c, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self.ptr, f)
     }
@@ -468,7 +468,7 @@ impl<'c> GcTraceToken<'c> {
         }
     }
 
-    unsafe fn accept_box<T: GcTarget<'c> + ?Sized>(&mut self, value: NonNull<GcBox<'c, T>>) {
+    unsafe fn accept_box<T: GcTarget<'c> + ?Sized + 'c>(&mut self, value: NonNull<GcBox<'c, T>>) {
         let value = value.as_ref();
         match value.info.state.get() {
             GcState::Untracked => {
@@ -480,7 +480,7 @@ impl<'c> GcTraceToken<'c> {
         }
     }
 
-    pub fn accept<T: GcTarget<'c> + ?Sized>(&mut self, value: &GcObject<'c, T>) {
+    pub fn accept<T: GcTarget<'c> + ?Sized + 'c>(&mut self, value: &GcObject<'c, T>) {
         unsafe { self.accept_box(value.ptr) };
     }
 
