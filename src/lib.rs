@@ -33,7 +33,7 @@ struct GcBox<'c, T: GcTarget<'c> + ?Sized> {
     value: ManuallyDrop<T>,
 }
 
-impl<'c, T: GcTarget<'c>> GcBox<'c, T> {
+impl<'c, T: GcTarget<'c> + 'c> GcBox<'c, T> {
     fn new(value: T) -> Self {
         let mut r = Self {
             metadata: GcBoxDynPtr::from_ptr(std::ptr::null::<GcBox<'c, T>>()).metadata,
@@ -114,11 +114,11 @@ impl<'c> GcBoxDynPtr<'c> {
         }
     }
 
-    const fn from_ptr(ptr: *const GcBox<'c, dyn GcTarget<'c>>) -> Self {
+    const fn from_ptr(ptr: *const GcBox<'c, dyn GcTarget<'c> + 'c>) -> Self {
         unsafe { transmute(ptr) }
     }
 
-    const fn as_mut(self) -> *mut GcBox<'c, dyn GcTarget<'c>> {
+    const fn as_mut(self) -> *mut GcBox<'c, dyn GcTarget<'c> + 'c> {
         unsafe { transmute(self) }
     }
 }
@@ -145,18 +145,18 @@ impl<'c> NonNullGcBox<'c> {
         })
     }
 
-    fn as_non_null(self) -> NonNull<GcBox<'c, dyn GcTarget<'c>>> {
+    fn as_non_null(self) -> NonNull<GcBox<'c, dyn GcTarget<'c> + 'c>> {
         unsafe {
             let metadata = *self.ptr.as_ptr().cast::<&'static ()>();
             NonNull::new_unchecked(GcBoxDynPtr::from_part(self.ptr.as_ptr(), metadata).as_mut())
         }
     }
 
-    fn as_ptr(self) -> *const GcBox<'c, dyn GcTarget<'c>> {
+    fn as_ptr(self) -> *const GcBox<'c, dyn GcTarget<'c> + 'c> {
         self.as_non_null().as_ptr()
     }
 
-    unsafe fn as_ref(&self) -> &GcBox<'c, dyn GcTarget<'c>> {
+    unsafe fn as_ref(&self) -> &GcBox<'c, dyn GcTarget<'c> + 'c> {
         &*self.as_ptr()
     }
 }
@@ -183,7 +183,7 @@ impl<'c> Drop for GcRootThin<'c> {
 }
 
 impl<'c> GcRootThin<'c> {
-    unsafe fn from_box(ptr: NonNull<GcBox<'c, dyn GcTarget<'c>>>) -> Self {
+    unsafe fn from_box(ptr: NonNull<GcBox<'c, dyn GcTarget<'c> + 'c>>) -> Self {
         let r = ptr.as_ref();
         r.info.root.set(r.info.root.get() + 1);
         Self {
@@ -192,7 +192,7 @@ impl<'c> GcRootThin<'c> {
         }
     }
 
-    pub fn as_ptr(&self) -> *const dyn GcTarget<'c> {
+    pub fn as_ptr(&self) -> *const (dyn GcTarget<'c> + 'c) {
         unsafe { self.ptr.as_ref().value() }
     }
 
@@ -200,7 +200,7 @@ impl<'c> GcRootThin<'c> {
         unsafe { GcObjectThin::from_box(self.ptr.as_non_null()) }
     }
 
-    pub fn cast_fat(self) -> GcRoot<'c, dyn GcTarget<'c>> {
+    pub fn cast_fat(self) -> GcRoot<'c, dyn GcTarget<'c> + 'c> {
         let r = GcRoot {
             ptr: self.ptr.as_non_null(),
         };
@@ -228,7 +228,7 @@ impl<'c> Debug for GcRootThin<'c> {
 }
 
 impl<'c> Deref for GcRootThin<'c> {
-    type Target = dyn GcTarget<'c>;
+    type Target = dyn GcTarget<'c> + 'c;
 
     fn deref(&self) -> &Self::Target {
         unsafe { &*self.as_ptr() }
@@ -264,7 +264,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcRoot<'c, T> {
         unsafe { GcObject::from_box(self.ptr) }
     }
 
-    pub fn cast_dyn(self) -> GcRoot<'c, dyn GcTarget<'c>> {
+    pub fn cast_dyn(self) -> GcRoot<'c, dyn GcTarget<'c> + 'c> {
         unsafe {
             let r = GcRoot {
                 ptr: NonNull::new_unchecked(
@@ -328,7 +328,7 @@ impl<'c> Drop for GcObjectThin<'c> {
 }
 
 impl<'c> GcObjectThin<'c> {
-    unsafe fn from_box(ptr: NonNull<GcBox<'c, dyn GcTarget<'c>>>) -> Self {
+    unsafe fn from_box(ptr: NonNull<GcBox<'c, dyn GcTarget<'c> + 'c>>) -> Self {
         let r = ptr.as_ref();
         r.info.count.set(r.info.count.get() + 1);
         Self {
@@ -337,7 +337,7 @@ impl<'c> GcObjectThin<'c> {
         }
     }
 
-    pub fn as_ptr(&self) -> *const dyn GcTarget<'c> {
+    pub fn as_ptr(&self) -> *const (dyn GcTarget<'c> + 'c) {
         unsafe { self.ptr.as_ref().value() }
     }
 
@@ -351,7 +351,7 @@ impl<'c> GcObjectThin<'c> {
         }
     }
 
-    pub fn cast_fat(self) -> GcObject<'c, dyn GcTarget<'c>> {
+    pub fn cast_fat(self) -> GcObject<'c, dyn GcTarget<'c> + 'c> {
         let r = GcObject {
             ptr: self.ptr.as_non_null(),
         };
@@ -411,7 +411,7 @@ impl<'c, T: GcTarget<'c> + ?Sized> GcObject<'c, T> {
         }
     }
 
-    pub fn cast_dyn(self) -> GcObject<'c, dyn GcTarget<'c>> {
+    pub fn cast_dyn(self) -> GcObject<'c, dyn GcTarget<'c> + 'c> {
         let r = GcObject {
             ptr: NonNullGcBox::from_non_null(self.ptr).as_non_null(),
         };
@@ -489,7 +489,7 @@ impl<'c> GcTraceToken<'c> {
     }
 }
 
-pub trait GcTarget<'c>: 'c {
+pub trait GcTarget<'c> {
     fn trace(&self, token: &mut GcTraceToken<'c>);
 }
 
@@ -576,7 +576,7 @@ impl<'c> GcContextRaw<'c> {
         self.alloc_count.set(0);
     }
 
-    fn alloc<T: GcTarget<'c>>(&'c self, value: T) -> GcRoot<'c, T> {
+    fn alloc<T: GcTarget<'c> + 'c>(&'c self, value: T) -> GcRoot<'c, T> {
         if self.auto_gc != 0 {
             let alloc_count = self.alloc_count.get() + 1;
             if alloc_count == self.auto_gc {
@@ -753,7 +753,7 @@ impl<'c> GcContext<'c> {
         self.inner_mut().set_auto_gc(auto_gc);
     }
 
-    pub fn alloc<T: GcTarget<'c>>(&'c self, value: T) -> GcRoot<'c, T> {
+    pub fn alloc<T: GcTarget<'c> + 'c>(&'c self, value: T) -> GcRoot<'c, T> {
         self.inner().alloc(value)
     }
 

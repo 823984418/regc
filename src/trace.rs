@@ -4,13 +4,13 @@ use std::rc::Rc;
 
 use crate::{trace_none, GcTarget, GcTraceToken};
 
-impl<'c, 's: 'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for &'s T {
+impl<'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for &T {
     fn trace(&self, token: &mut GcTraceToken<'c>) {
         T::trace(*self, token);
     }
 }
 
-impl<'c, 's: 'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for &'s mut T {
+impl<'c, T: GcTarget<'c> + ?Sized> GcTarget<'c> for &mut T {
     fn trace(&self, token: &mut GcTraceToken<'c>) {
         T::trace(*self, token);
     }
