@@ -167,6 +167,7 @@ impl<'c> Debug for NonNullGcBox<'c> {
     }
 }
 
+#[derive(Eq, PartialEq)]
 pub struct GcRootThin<'c> {
     ptr: NonNullGcBox<'c>,
     marker: PhantomData<GcRoot<'c, dyn GcTarget<'c> + 'c>>,
@@ -190,6 +191,10 @@ impl<'c> GcRootThin<'c> {
             ptr: NonNullGcBox::from_non_null(ptr),
             marker: PhantomData,
         }
+    }
+
+    pub fn base_ptr(&self) -> NonNull<()> {
+        self.ptr.ptr
     }
 
     pub fn as_ptr(&self) -> *const (dyn GcTarget<'c> + 'c) {
@@ -235,6 +240,7 @@ impl<'c> Deref for GcRootThin<'c> {
     }
 }
 
+#[derive(Eq)]
 pub struct GcRoot<'c, T: GcTarget<'c> + ?Sized + 'c> {
     ptr: NonNull<GcBox<'c, T>>,
 }
@@ -254,6 +260,10 @@ impl<'c, T: GcTarget<'c> + ?Sized + 'c> GcRoot<'c, T> {
         let r = ptr.as_ref();
         r.info.root.set(r.info.root.get() + 1);
         Self { ptr }
+    }
+
+    pub fn base_ptr(&self) -> NonNull<()> {
+        self.ptr.cast()
     }
 
     pub fn as_ptr(&self) -> *const T {
@@ -286,6 +296,15 @@ impl<'c, T: GcTarget<'c> + ?Sized + 'c> GcRoot<'c, T> {
     }
 }
 
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> PartialEq for GcRoot<'c, T> {
+    fn eq(&self, other: &Self) -> bool {
+        PartialEq::eq(&self.ptr.cast::<()>(), &other.ptr.cast::<()>())
+    }
+    fn ne(&self, other: &Self) -> bool {
+        PartialEq::ne(&self.ptr.cast::<()>(), &other.ptr.cast::<()>())
+    }
+}
+
 impl<'c, T: GcTarget<'c> + ?Sized + 'c> Clone for GcRoot<'c, T> {
     fn clone(&self) -> Self {
         unsafe { Self::from_box(self.ptr) }
@@ -312,6 +331,7 @@ impl<'c, T: GcTarget<'c> + ?Sized + 'c> Deref for GcRoot<'c, T> {
     }
 }
 
+#[derive(Eq, PartialEq)]
 pub struct GcObjectThin<'c> {
     ptr: NonNullGcBox<'c>,
     marker: PhantomData<GcObject<'c, dyn GcTarget<'c> + 'c>>,
@@ -335,6 +355,10 @@ impl<'c> GcObjectThin<'c> {
             ptr: NonNullGcBox::from_non_null(ptr),
             marker: PhantomData,
         }
+    }
+
+    pub fn base_ptr(&self) -> NonNull<()> {
+        self.ptr.ptr
     }
 
     pub fn as_ptr(&self) -> *const (dyn GcTarget<'c> + 'c) {
@@ -399,6 +423,10 @@ impl<'c, T: GcTarget<'c> + ?Sized + 'c> GcObject<'c, T> {
         Self { ptr }
     }
 
+    pub fn base_ptr(&self) -> NonNull<()> {
+        self.ptr.cast()
+    }
+
     pub fn as_ptr(&self) -> *const T {
         unsafe { self.ptr.as_ref().value() }
     }
@@ -426,6 +454,15 @@ impl<'c, T: GcTarget<'c> + ?Sized + 'c> GcObject<'c, T> {
         };
         forget(self);
         r
+    }
+}
+
+impl<'c, T: GcTarget<'c> + ?Sized + 'c> PartialEq for GcObject<'c, T> {
+    fn eq(&self, other: &Self) -> bool {
+        PartialEq::eq(&self.ptr.cast::<()>(), &other.ptr.cast::<()>())
+    }
+    fn ne(&self, other: &Self) -> bool {
+        PartialEq::ne(&self.ptr.cast::<()>(), &other.ptr.cast::<()>())
     }
 }
 

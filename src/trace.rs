@@ -1,8 +1,14 @@
+use std::any::TypeId;
 use std::cell::{Cell, RefCell};
 use std::collections::{LinkedList, VecDeque};
+use std::ffi::{OsStr, OsString};
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
 use std::marker::{PhantomData, PhantomPinned};
 use std::ops::Deref;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use crate::{trace_none, GcTarget, GcTraceToken};
 
@@ -114,6 +120,16 @@ trace_none!(isize);
 trace_none!(usize);
 trace_none!(f32);
 trace_none!(f64);
+trace_none!(str);
+trace_none!(String);
+trace_none!(OsStr);
+trace_none!(OsString);
+trace_none!(Path);
+trace_none!(PathBuf);
+trace_none!(TypeId);
+trace_none!(File);
+trace_none!(Instant);
+trace_none!(Duration);
 
 macro_rules! trace_tuple {
     ($($name:ident)*) => {
